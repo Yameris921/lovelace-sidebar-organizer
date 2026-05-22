@@ -3,8 +3,10 @@
 Provides:
   - Persistent server-side config storage (.storage/sidebar_organizer)
   - WebSocket API (sidebar_organizer/get_config, sidebar_organizer/save_config)
-  - Auto-registration of the frontend JS module
-  - Auto-registration of the config panel (admin only)
+  - Auto-registration of the frontend JS module (no Lovelace resource needed)
+  - Auto-registration of the config panel (no configuration.yaml needed)
+
+Activated via: Settings → Devices & Services → Add Integration → Sidebar Organizer
 """
 from __future__ import annotations
 
@@ -12,16 +14,16 @@ import logging
 from pathlib import Path
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.typing import ConfigType
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.storage import Store
 
 from . import websocket_api as ws_api
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN           = "sidebar_organizer"
-STORAGE_KEY      = "sidebar_organizer"
-STORAGE_VERSION  = 1
+DOMAIN          = "sidebar_organizer"
+STORAGE_KEY     = "sidebar_organizer"
+STORAGE_VERSION = 1
 
 DEFAULT_CONFIG: dict = {
     "version"       : 1,
@@ -31,8 +33,14 @@ DEFAULT_CONFIG: dict = {
 }
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Sidebar Organizer integration."""
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Called by HA on startup — only initialises hass.data."""
+    hass.data.setdefault(DOMAIN, {})
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Sidebar Organizer from a config entry (UI flow)."""
 
     # ── 1. Persistent storage ──────────────────────────────────────────────
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -44,6 +52,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.data[DOMAIN] = {
         "store"  : store,
         "config" : stored,
+        "entry"  : entry,
     }
 
     # ── 2. Serve frontend JS as a static path ──────────────────────────────
@@ -54,7 +63,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         cache_headers=False,
     )
 
-    # ── 3. Auto-load JS for all users (no manual Lovelace resource needed) ─
+    # ── 3. Auto-load JS for all users ──────────────────────────────────────
     try:
         from homeassistant.components.frontend import add_extra_js_url
         add_extra_js_url(
@@ -76,12 +85,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         from homeassistant.components.panel_custom import async_register_panel
         await async_register_panel(
             hass,
-            webcomponent_name    = "lovelace-sidebar-organizer",
-            frontend_url_path    = "sidebar-organizer",
-            sidebar_title        = "Sidebar Organizer",
-            sidebar_icon         = "mdi:layers-edit",
-            require_admin        = True,
-            config               = {},
+            webcomponent_name = "lovelace-sidebar-organizer",
+            frontend_url_path = "sidebar-organizer",
+            sidebar_title     = "Sidebar Organizer",
+            sidebar_icon      = "mdi:layers-edit",
+            require_admin     = True,
+            config            = {},
         )
         _LOGGER.debug("Sidebar Organizer: panel enregistré")
     except Exception as exc:  # noqa: BLE001
@@ -94,5 +103,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # ── 5. WebSocket API ───────────────────────────────────────────────────
     ws_api.async_register_commands(hass)
 
-    _LOGGER.info("Lovelace Sidebar Organizer v1.0.0 démarré")
+    _LOGGER.info("Lovelace Sidebar Organizer v1.0.1 démarré")
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload the config entry."""
+    hass.data.pop(DOMAIN, None)
     return True

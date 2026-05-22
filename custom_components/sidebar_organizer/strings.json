@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sidebar Organizer",
+        "description": "Installer Sidebar Organizer.\n\nAprès installation, un panel de configuration apparaîtra dans votre sidebar (administrateurs uniquement)."
+      }
+    },
+    "abort": {
+      "already_configured": "Sidebar Organizer est déjà installé."
+    },
+    "create_entry": {
+      "default": "Sidebar Organizer installé avec succès."
+    }
+  }
+}
