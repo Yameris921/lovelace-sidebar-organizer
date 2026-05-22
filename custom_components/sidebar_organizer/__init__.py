@@ -57,11 +57,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # ── 2. Serve frontend JS as a static path ──────────────────────────────
     frontend_dir = Path(__file__).parent / "frontend"
-    hass.http.register_static_path(
-        "/sidebar_organizer",
-        str(frontend_dir),
-        cache_headers=False,
-    )
+    try:
+        # HA 2023.9+ — méthode async avec StaticPathConfig
+        from homeassistant.components.http import StaticPathConfig
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(
+                url_path     = "/sidebar_organizer",
+                path         = str(frontend_dir),
+                cache_headers= False,
+            )
+        ])
+    except (ImportError, AttributeError):
+        # Fallback anciennes versions
+        hass.http.register_static_path(
+            "/sidebar_organizer",
+            str(frontend_dir),
+            cache_headers=False,
+        )
 
     # ── 3. Auto-load JS for all users ──────────────────────────────────────
     try:
