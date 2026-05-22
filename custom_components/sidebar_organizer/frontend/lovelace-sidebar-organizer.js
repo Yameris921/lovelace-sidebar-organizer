@@ -221,23 +221,30 @@
       this._watch();
     }
 
-    /* ── Config load (server → localStorage fallback) ────────────────── */
+    /* ── Config load (server avec retry → localStorage fallback) ────── */
 
     async _loadConfig () {
-      try {
-        const cfg = await this.hass.callWS({ type: WS_GET });
-        this._serverOk = true;
-        // Met à jour le cache local
-        try { localStorage.setItem(CACHE_KEY, JSON.stringify(cfg)); } catch (_) {}
-        return Object.assign({}, DEFAULT_CONFIG, cfg);
-      } catch (_) {
-        this._serverOk = false;
-        console.warn('[LSO] Composant serveur non disponible — fallback localStorage');
+      // Retry jusqu'à 5x avec 2s d'intervalle — l'intégration Python
+      // peut charger après le frontend au démarrage de HA.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (attempt > 0) await _sleep(2000);
         try {
-          const raw = localStorage.getItem(CACHE_KEY);
-          return raw ? Object.assign({}, DEFAULT_CONFIG, JSON.parse(raw)) : _clone(DEFAULT_CONFIG);
-        } catch { return _clone(DEFAULT_CONFIG); }
+          const cfg = await this.hass.callWS({ type: WS_GET });
+          this._serverOk = true;
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify(cfg)); } catch (_) {}
+          if (attempt > 0) console.info('[LSO] Serveur connecté après', attempt, 'tentative(s)');
+          return Object.assign({}, DEFAULT_CONFIG, cfg);
+        } catch (err) {
+          console.warn(`[LSO] Tentative ${attempt + 1}/5 échouée:`, err?.message || err);
+        }
       }
+      // Toutes les tentatives ont échoué → fallback localStorage
+      this._serverOk = false;
+      console.warn('[LSO] Composant serveur non disponible — fallback localStorage');
+      try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        return raw ? Object.assign({}, DEFAULT_CONFIG, JSON.parse(raw)) : _clone(DEFAULT_CONFIG);
+      } catch { return _clone(DEFAULT_CONFIG); }
     }
 
     /* ── Config save (server → localStorage fallback) ────────────────── */
