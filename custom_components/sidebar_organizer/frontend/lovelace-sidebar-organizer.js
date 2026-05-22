@@ -15,7 +15,7 @@
 (function () {
   'use strict';
 
-  const VERSION    = '1.0.0';
+  const VERSION    = '1.0.6';
   const CACHE_KEY  = 'lso_cache';      // localStorage cache (lecture seule pour non-admins)
   const EXP_KEY    = 'lso_exp_';       // clé expand/collapse par groupe
 
@@ -423,12 +423,39 @@
 
     /* ── Panel helpers ───────────────────────────────────────────────── */
 
-    getAllPanels () {
-      return this._navItems().map(el => ({
-        panel : el.getAttribute('data-panel'),
-        title : el.querySelector('.item-text, .title, span:not(.notification-badge)')
-                    ?.textContent?.trim() || el.getAttribute('data-panel'),
-      }));
+    getAllPanels (hassObj) {
+      const h = hassObj || this.hass;
+      const hapanels = h?.panels;
+
+      if (hapanels && Object.keys(hapanels).length > 0) {
+        // Enrichir avec les titres du DOM si disponibles
+        const domTitles = {};
+        this._navItems().forEach(el => {
+          const p = el.getAttribute('data-panel');
+          if (!p) return;
+          const txt = el.querySelector(
+            '.item-text, .title, .item-name, span:not(.notification-badge)'
+          )?.textContent?.trim();
+          if (txt) domTitles[p] = txt;
+        });
+
+        return Object.values(hapanels)
+          .filter(p => p.url_path && p.url_path !== 'sidebar-organizer')
+          .map(p => ({
+            panel : p.url_path,
+            title : domTitles[p.url_path] || p.title || p.url_path,
+          }))
+          .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      }
+
+      // Fallback DOM
+      return this._navItems()
+        .map(el => ({
+          panel : el.getAttribute('data-panel'),
+          title : el.querySelector('.item-text, .title, .item-name, span:not(.notification-badge)')
+                      ?.textContent?.trim() || el.getAttribute('data-panel'),
+        }))
+        .filter(p => p.panel);
     }
 
     async getHAUsers () {
@@ -459,7 +486,16 @@
       this._tab    = 'groups';
     }
 
-    set hass (h) { this._hass = h; if (!this._cfg) this._init(); }
+    set hass (h) {
+      this._hass = h;
+      if (!this._cfg) {
+        this._init();
+      } else if (this._panels && this._panels.length === 0) {
+        // Retry si les panneaux n'étaient pas encore disponibles au premier init
+        this._panels = window._lsoManager?.getAllPanels(h) || [];
+        if (this._panels.length > 0 && this._tab === 'groups') this._render();
+      }
+    }
     set narrow (v) {}
     set route  (v) {}
     set panel  (v) {}
@@ -467,7 +503,7 @@
     async _init () {
       const mgr    = window._lsoManager;
       this._cfg    = _clone(mgr.config);
-      this._panels = mgr.getAllPanels();
+      this._panels = mgr.getAllPanels(this._hass);   // passe hass pour hass.panels
       this._users  = await mgr.getHAUsers();
       this._render();
     }
@@ -760,6 +796,7 @@ localStorage["lso_cache"]            ← cache lecture seule (fallback)</pre>
      UTILS & BOOTSTRAP
   ═══════════════════════════════════════════════════════════════════════ */
 
+  function _sleep (ms) { return new Promise(r => setTimeout(r, ms)); }
   function _clone (o) { return JSON.parse(JSON.stringify(o)); }
   function _esc   (s) {
     return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
