@@ -15,7 +15,7 @@
 (function () {
   'use strict';
 
-  const VERSION    = '1.0.7';
+  const VERSION    = '1.0.8';
   const CACHE_KEY  = 'lso_cache';      // localStorage cache (lecture seule pour non-admins)
   const EXP_KEY    = 'lso_exp_';       // clé expand/collapse par groupe
 
@@ -410,15 +410,45 @@
     /* ── Watch ───────────────────────────────────────────────────────── */
 
     _watch () {
-      window.addEventListener('location-changed', () => {
+      // Debounce anti-boucle : Lit re-rend ha-sidebar sur chaque update hass,
+      // ce qui efface nos groupes injectés. On les réinjecte dès qu'ils
+      // disparaissent, sans créer de boucle infinie.
+      let _pending = false;
+      const _reapply = () => {
+        if (_pending) return;
+        _pending = true;
         setTimeout(() => {
-          if (!this._sidebarRoot()?.querySelector('.lso-group')) this.refresh();
-        }, 200);
-      });
+          _pending = false;
+          const root = this._sidebarRoot();
+          if (!root) return;
+          if (!root.querySelector('#lso-css')) this._injectCSS();
+          const hasGroups = (this.config.groups || []).some(g => (g.items || []).length > 0);
+          if (hasGroups && !root.querySelector('.lso-group')) this.applyGroups();
+        }, 80);
+      };
+
+      window.addEventListener('location-changed', () => setTimeout(_reapply, 200));
+
+      // Observer les changements de structure globale de HA
       const ha = this._ha();
       if (ha) new MutationObserver(() => {
-        if (!this._sidebarRoot()?.querySelector('#lso-css')) this.refresh();
+        if (!this._sidebarRoot()?.querySelector('#lso-css')) _reapply();
       }).observe(ha, { childList: true, subtree: true });
+
+      // ─── CLEF ─── Observer le shadow root du sidebar directement.
+      // MutationObserver ne traverse PAS les shadow DOM boundaries, donc
+      // l'observer sur <home-assistant> ne voit pas les re-renders de ha-sidebar.
+      const sidebarRoot = this._sidebarRoot();
+      if (sidebarRoot) {
+        new MutationObserver(muts => {
+          // Ne réagir que si des noeuds ont été supprimés (= re-render Lit)
+          // et que nos groupes ont disparu. Les insertions de notre côté
+          // (addedNodes only, removedNodes=0) n'ont aucun effet → pas de boucle.
+          const wiped = muts.some(m => m.removedNodes.length > 0)
+                        && !sidebarRoot.querySelector('.lso-group');
+          if (wiped) _reapply();
+        }).observe(sidebarRoot, { childList: true, subtree: true });
+      }
     }
 
     /* ── Panel helpers ───────────────────────────────────────────────── */
