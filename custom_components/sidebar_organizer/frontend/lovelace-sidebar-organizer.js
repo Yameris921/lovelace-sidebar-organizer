@@ -15,7 +15,7 @@
 (function () {
   'use strict';
 
-  const VERSION    = '1.0.8';
+  const VERSION    = '1.0.9';
   const CACHE_KEY  = 'lso_cache';      // localStorage cache (lecture seule pour non-admins)
   const EXP_KEY    = 'lso_exp_';       // clé expand/collapse par groupe
 
@@ -215,7 +215,11 @@
       this.config    = await this._loadConfig();
       this._userRole = this._detectRole();
 
-      await _poll(() => this._navItems().length > 0);
+      // Patch ha-sidebar.updated() pour survivre aux re-renders Lit (HA 2024+)
+      this._patchSidebar();
+
+      // Application initiale (best-effort — la patch prend le relais si ça échoue)
+      await _poll(() => this._navItems().length > 0, 8000);
       this._injectCSS();
       this.applyGroups();
       this._watch();
@@ -292,9 +296,19 @@
                     : main.shadowRoot.querySelector('ha-sidebar');
     }
     _sidebarRoot () { return this._sidebar()?.shadowRoot; }
-    _navItems    () {
+    _navItems () {
       const root = this._sidebarRoot();
-      return root ? Array.from(root.querySelectorAll('[data-panel]')) : [];
+      if (!root) {
+        console.warn('[LSO] _navItems: shadow root du sidebar introuvable');
+        return [];
+      }
+      const items = Array.from(root.querySelectorAll('[data-panel]'))
+                      .filter(el => !el.closest('.lso-group'));
+      if (!items.length) {
+        console.warn('[LSO] _navItems: aucun [data-panel] trouvé. Enfants directs du shadow root :',
+          Array.from(root.children).map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '')).join(', '));
+      }
+      return items;
     }
 
     /* ── Role ────────────────────────────────────────────────────────── */
@@ -449,6 +463,59 @@
           if (wiped) _reapply();
         }).observe(sidebarRoot, { childList: true, subtree: true });
       }
+    }
+
+    /* ── Patch ha-sidebar prototype (survie aux re-renders Lit) ─────── */
+
+    _patchSidebar () {
+      const mgr = this;
+      const _do = () => {
+        const Cls = customElements.get('ha-sidebar');
+        if (!Cls || Cls.prototype._lso_patched) return;
+        Cls.prototype._lso_patched = true;
+
+        const orig = Cls.prototype.updated;
+        Cls.prototype.updated = function (changed) {
+          if (orig) orig.call(this, changed);
+          const root = this.shadowRoot;
+          if (!root) return;
+
+          // Réinjecter CSS si disparu
+          if (!root.querySelector('#lso-css')) {
+            const s = document.createElement('style');
+            s.id = 'lso-css'; s.textContent = SIDEBAR_CSS;
+            root.appendChild(s);
+          }
+          // Réinjecter groupes si effacés par le re-render
+          const hasGrp = (mgr.config.groups || []).some(g => (g.items || []).length > 0);
+          if (hasGrp && !root.querySelector('.lso-group')) mgr.applyGroups();
+        };
+        console.info('[LSO] ha-sidebar.updated() patché ✓');
+      };
+
+      _do();                                             // si déjà défini
+      customElements.whenDefined('ha-sidebar').then(_do); // sinon : attendre
+    }
+
+    /* ── Debug info pour le panel À propos ──────────────────────────── */
+
+    getDebugInfo () {
+      const root  = this._sidebarRoot();
+      const items = root ? Array.from(root.querySelectorAll('[data-panel]'))
+                               .filter(el => !el.closest('.lso-group'))
+                         : [];
+      return {
+        sidebarEl    : !!this._sidebar(),
+        sidebarRoot  : !!root,
+        navItems     : items.length,
+        rootChildren : root
+          ? Array.from(root.children).map(e => e.tagName.toLowerCase() + (e.id ? '#'+e.id : '')).join(', ')
+          : '—',
+        patchApplied : !!customElements.get('ha-sidebar')?.prototype?._lso_patched,
+        panelsCount  : Object.keys(this.hass?.panels || {}).length,
+        groupsCount  : (this.config.groups || []).length,
+        lsoGroupInDOM: !!root?.querySelector('.lso-group'),
+      };
     }
 
     /* ── Panel helpers ───────────────────────────────────────────────── */
@@ -704,6 +771,8 @@
     /* ── Tab À propos ────────────────────────────────────────────────── */
 
     _htmlAbout () {
+      const dbg = window._lsoManager?.getDebugInfo() || {};
+      const _yn = v => v ? '<span class="chk">✓</span>' : '<span class="crs">✗</span>';
       return `
         <div class="lso-card" style="margin-top:8px">
           <h3 style="font-size:16px;margin-bottom:10px">Lovelace Sidebar Organizer</h3>
@@ -712,6 +781,17 @@
             Config stockée dans <code>.storage/sidebar_organizer</code> côté serveur HA.<br>
             Protection admin enforced côté Python — aucun utilisateur non-admin ne peut modifier la config via l'API.
           </p>
+          <div class="lso-section">Diagnostic DOM (actualiser pour rafraîchir)</div>
+          <table class="about-table">
+            <tr><td>Élément ha-sidebar trouvé</td><td>${_yn(dbg.sidebarEl)}</td></tr>
+            <tr><td>Shadow root accessible</td><td>${_yn(dbg.sidebarRoot)}</td></tr>
+            <tr><td>Items [data-panel] trouvés</td><td>${dbg.navItems ?? '—'}</td></tr>
+            <tr><td>Enfants directs du shadow root</td><td style="font-size:10px;word-break:break-all">${dbg.rootChildren || '—'}</td></tr>
+            <tr><td>Patch ha-sidebar.updated()</td><td>${_yn(dbg.patchApplied)}</td></tr>
+            <tr><td>Panneaux dans hass.panels</td><td>${dbg.panelsCount ?? '—'}</td></tr>
+            <tr><td>Groupes configurés</td><td>${dbg.groupsCount ?? '—'}</td></tr>
+            <tr><td>.lso-group présent dans le DOM</td><td>${_yn(dbg.lsoGroupInDOM)}</td></tr>
+          </table>
           <div class="lso-section">Matrice des accès</div>
           <table class="about-table">
             <tr><th>Accès du groupe</th><th>Admin</th><th>Utilisateur</th><th>Visiteur</th></tr>
