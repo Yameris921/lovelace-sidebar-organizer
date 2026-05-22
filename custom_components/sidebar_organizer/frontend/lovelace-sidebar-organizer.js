@@ -15,7 +15,7 @@
 (function () {
   'use strict';
 
-  const VERSION    = '1.0.6';
+  const VERSION    = '1.0.7';
   const CACHE_KEY  = 'lso_cache';      // localStorage cache (lecture seule pour non-admins)
   const EXP_KEY    = 'lso_exp_';       // clé expand/collapse par groupe
 
@@ -441,10 +441,19 @@
 
         return Object.values(hapanels)
           .filter(p => p.url_path && p.url_path !== 'sidebar-organizer')
-          .map(p => ({
-            panel : p.url_path,
-            title : domTitles[p.url_path] || p.title || p.url_path,
-          }))
+          .map(p => {
+            // Localisation HA : hass.localize('panel.history') → 'Historique'
+            const _l = k => { const t = h.localize?.(k); return (t && t !== k) ? t : null; };
+            const isDefault = p.url_path === h.defaultPanel;
+            return {
+              panel : p.url_path,
+              title : domTitles[p.url_path]                          // titre DOM (déjà localisé)
+                     || _l(isDefault ? 'panel.states' : `panel.${p.url_path}`)
+                     || _l(`panel.${p.component_name}`)              // fallback component_name
+                     || p.title                                       // titre brut du panel
+                     || p.url_path,                                   // dernier recours
+            };
+          })
           .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
       }
 
