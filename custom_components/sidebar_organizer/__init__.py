@@ -102,6 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             sidebar_title     = "Sidebar Organizer",
             sidebar_icon      = "mdi:layers-edit",
             require_admin     = True,
+            module_url        = "/sidebar_organizer/lovelace-sidebar-organizer.js",
             config            = {},
         )
         _LOGGER.debug("Sidebar Organizer: panel enregistré")
